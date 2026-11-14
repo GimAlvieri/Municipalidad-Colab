@@ -2,42 +2,53 @@ require('dotenv').config();
 
 const path = require('node:path');
 const express = require('express');
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const pool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
-  : null;
+const host = process.env.HOST || '127.0.0.1';
+const pool = process.env.DB_HOST ? mysql.createPool({
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'rrhh_app',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'rrhh_demo',
+  waitForConnections: true,
+  connectionLimit: 5,
+  dateStrings: true
+}) : null;
 
 app.use(express.json({ limit: '20kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function requireDatabase(_req, res, next) {
   if (!pool) {
-    return res.status(503).json({
-      error: 'Falta configurar DATABASE_URL. Copia .env.example como .env y agrega la conexión de Supabase.'
-    });
+    return res.status(503).json({ error: 'Configura DB_HOST, DB_NAME, DB_USER y DB_PASSWORD en el entorno.' });
   }
   next();
 }
 
 function validDate(value) {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-    && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({ databaseConfigured: Boolean(pool) });
+app.get('/api/health', async (_req, res) => {
+  if (!pool) return res.json({ databaseConfigured: false });
+  try {
+    await pool.query('SELECT 1');
+    res.json({ databaseConfigured: true });
+  } catch {
+    res.status(503).json({ databaseConfigured: false });
+  }
 });
 
 app.get('/api/areas', requireDatabase, async (_req, res, next) => {
   try {
-    const result = await pool.query('select id, nombre from rrhh_demo.areas order by nombre');
-    res.json(result.rows);
-  } catch (error) {
-    next(error);
-  }
+    const [rows] = await pool.execute('SELECT id, nombre FROM areas ORDER BY nombre');
+    res.json(rows);
+  } catch (error) { next(error); }
 });
 
 app.get('/api/solicitudes', requireDatabase, async (req, res, next) => {
@@ -46,21 +57,19 @@ app.get('/api/solicitudes', requireDatabase, async (req, res, next) => {
     let filter = '';
     if (['pendiente', 'aprobada', 'rechazada'].includes(req.query.estado)) {
       values.push(req.query.estado);
-      filter = `and s.estado = $${values.length}`;
+      filter = 'AND s.estado = ?';
     }
-    const result = await pool.query(`
-      select s.id, s.codigo_trabajador, a.nombre as area, s.area_id,
+    const [rows] = await pool.execute(`
+      SELECT s.id, s.codigo_trabajador, a.nombre AS area, s.area_id,
              s.tipo, s.fecha_inicio, s.fecha_fin, s.estado, s.creado_en
-      from rrhh_demo.solicitudes s
-      join rrhh_demo.areas a on a.id = s.area_id
-      where s.codigo_trabajador like 'DEMO-%' ${filter}
-      order by s.fecha_inicio desc, s.id desc
-      limit 200
+      FROM solicitudes s
+      JOIN areas a ON a.id = s.area_id
+      WHERE s.codigo_trabajador LIKE 'DEMO-%' ${filter}
+      ORDER BY s.fecha_inicio DESC, s.id DESC
+      LIMIT 200
     `, values);
-    res.json(result.rows);
-  } catch (error) {
-    next(error);
-  }
+    res.json(rows);
+  } catch (error) { next(error); }
 });
 
 app.post('/api/solicitudes', requireDatabase, async (req, res, next) => {
@@ -72,22 +81,24 @@ app.post('/api/solicitudes', requireDatabase, async (req, res, next) => {
     return res.status(400).json({ error: 'El tipo debe ser vacaciones o permiso.' });
   }
   if (!validDate(inicio) || !validDate(fin) || fin < inicio) {
-    return res.status(400).json({ error: 'Revisa las fechas: ambas son obligatorias y la fecha final no puede ser anterior.' });
+    return res.status(400).json({ error: 'Revisa las fechas: la fecha final no puede ser anterior a la inicial.' });
   }
   if (!Number.isInteger(Number(areaId)) || Number(areaId) < 1) {
     return res.status(400).json({ error: 'Selecciona un área válida.' });
   }
-
   try {
-    const result = await pool.query(`
-      insert into rrhh_demo.solicitudes
+    const [result] = await pool.execute(`
+      INSERT INTO solicitudes
         (codigo_trabajador, area_id, tipo, fecha_inicio, fecha_fin, estado, observacion_demo)
-      values ($1, $2, $3, $4, $5, 'pendiente', 'Registro ficticio desde la demo web')
-      returning id, codigo_trabajador, area_id, tipo, fecha_inicio, fecha_fin, estado
+      VALUES (?, ?, ?, ?, ?, 'pendiente', 'Registro ficticio desde la demo web')
     `, [codigo.trim().toUpperCase(), Number(areaId), tipo, inicio, fin]);
-    res.status(201).json(result.rows[0]);
+    const [rows] = await pool.execute(`
+      SELECT id, codigo_trabajador, area_id, tipo, fecha_inicio, fecha_fin, estado
+      FROM solicitudes WHERE id = ?
+    `, [result.insertId]);
+    res.status(201).json(rows[0]);
   } catch (error) {
-    if (error.code === '23503') return res.status(400).json({ error: 'El área seleccionada no existe.' });
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') return res.status(400).json({ error: 'El área seleccionada no existe.' });
     next(error);
   }
 });
@@ -99,27 +110,22 @@ app.patch('/api/solicitudes/:id/estado', requireDatabase, async (req, res, next)
     return res.status(400).json({ error: 'Solicitud o decisión inválida.' });
   }
   try {
-    const result = await pool.query(`
-      update rrhh_demo.solicitudes
-      set estado = $1
-      where id = $2 and estado = 'pendiente' and codigo_trabajador like 'DEMO-%'
-      returning id, estado
+    const [result] = await pool.execute(`
+      UPDATE solicitudes SET estado = ?
+      WHERE id = ? AND estado = 'pendiente' AND codigo_trabajador LIKE 'DEMO-%'
     `, [estado, id]);
-    if (!result.rowCount) return res.status(404).json({ error: 'No se encontró una solicitud ficticia pendiente con ese código.' });
-    res.json(result.rows[0]);
-  } catch (error) {
-    next(error);
-  }
+    if (!result.affectedRows) return res.status(404).json({ error: 'No se encontró una solicitud ficticia pendiente con ese código.' });
+    res.json({ id, estado });
+  } catch (error) { next(error); }
 });
 
 app.use('/api', (error, _req, res, _next) => {
   console.error(error.message);
-  res.status(500).json({ error: 'No se pudo completar la operación. Revisa la conexión y que hayas ejecutado sql/schema.sql.' });
+  res.status(500).json({ error: 'No se pudo completar la operación. Revisa MariaDB y ejecuta sql/schema.sql.' });
 });
 
-app.listen(port, '127.0.0.1', () => {
-  console.log(`Demo RR. HH. disponible en http://localhost:${port}`);
-  if (!pool) console.log('Configura DATABASE_URL en .env para habilitar la base de datos.');
+app.listen(port, host, () => {
+  console.log(`Demo RR. HH. disponible en http://${host}:${port}`);
 });
 
 async function closePool() {
