@@ -1,6 +1,6 @@
 # Control demo de vacaciones y permisos
 
-Proyecto educativo para practicar una base de datos MariaDB desde Google Colab. El cuaderno instala el servidor dentro de la sesión, crea `rrhh_demo`, carga el SQL y muestra cómo consultar y registrar solicitudes ficticias. También incluye una interfaz web HTML/CSS/JavaScript y un servidor Node para ejecutarlos en una computadora con MariaDB.
+Proyecto educativo para practicar una base de datos MariaDB desde Google Colab. El cuaderno instala el servidor dentro de la sesión, crea `rrhh_demo`, carga el SQL, consulta y registra solicitudes ficticias; también puede iniciar la interfaz web HTML/CSS/JavaScript con un enlace temporal de Colab. El servidor Node también se puede ejecutar en una computadora con MariaDB.
 
 > Usa solo códigos ficticios como `DEMO-001`. No ingreses nombres, DNI, sueldos, teléfonos ni información laboral real. La MariaDB de Colab es temporal y desaparece al reiniciarse o cerrarse su entorno.
 

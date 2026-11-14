@@ -83,7 +83,7 @@ function renderRows() {
 
 async function loadRequests() {
   try {
-    state.requests = await api('/api/solicitudes');
+    state.requests = await api('api/solicitudes');
     setConnection(true, 'Base conectada');
   } catch (error) {
     state.requests = [];
@@ -97,7 +97,7 @@ async function loadRequests() {
 async function loadAreas() {
   const select = $('#area-select');
   try {
-    state.areas = await api('/api/areas');
+    state.areas = await api('api/areas');
     select.innerHTML = '<option value="">Selecciona un área</option>' + state.areas
       .map((area) => `<option value="${Number(area.id)}">${escapeHtml(area.nombre)}</option>`).join('');
   } catch {
@@ -141,7 +141,7 @@ $('#request-rows').addEventListener('click', async (event) => {
   if (!button) return;
   button.disabled = true;
   try {
-    await api(`/api/solicitudes/${button.dataset.id}/estado`, {
+    await api(`api/solicitudes/${button.dataset.id}/estado`, {
       method: 'PATCH',
       body: JSON.stringify({ estado: button.dataset.decision })
     });
@@ -162,7 +162,7 @@ form.addEventListener('submit', async (event) => {
   submitButton.disabled = true;
   message.textContent = '';
   try {
-    await api('/api/solicitudes', { method: 'POST', body: JSON.stringify(body) });
+    await api('api/solicitudes', { method: 'POST', body: JSON.stringify(body) });
     message.textContent = 'Solicitud ficticia guardada.';
     message.classList.add('success');
     form.reset();
